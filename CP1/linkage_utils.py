@@ -915,6 +915,43 @@ def evaluate_submission(target_curves_path = './target_curves.npy', results_fold
     
     return np.mean(scores)
 
+def plot_HV(F, ref):
+
+    #Plot the designs
+    plt.scatter(F[:,1],F[:,0])
+
+    #plot the reference point
+    plt.scatter(ref[1],ref[0],color="red")
+
+    #plot labels
+    plt.xlabel('Material Use')
+    plt.ylabel('Chamfer Distance')
+
+    #sort designs and append reference point
+    sorted_performance = F[np.argsort(F[:,1])]
+    sorted_performance = np.concatenate([sorted_performance,[ref]])
+
+    #create "ghost points" for inner corners
+    inner_corners = np.stack([sorted_performance[:,0], np.roll(sorted_performance[:,1], -1)]).T
+
+    #Interleave designs and ghost points
+    final = np.empty((sorted_performance.shape[0]*2, 2))
+    final[::2,:] = sorted_performance
+    final[1::2,:] = inner_corners
+
+    #Create filled polygon
+    plt.fill(final[:,1],final[:,0],color="#008cff",alpha=0.2)
+
+def comparecurves(C, x, fixed_nodes, motor, target, target_pc):
+    valid, CD, mat, sol, aligned_curve = evaluate_mechanism(C,x,fixed_nodes, motor, target_pc, idx=target,device='cpu',timesteps=2000)
+    # target_pc = get_oriented(target_pc)
+    plt.plot(sol[:,0],sol[:,1], color='royalblue', linewidth=3)
+    plt.plot(aligned_curve[:,0],aligned_curve[:,1], color='tomato', alpha=0.5, linewidth=3)
+    plt.title(f"Chamfer Distance: {CD:.5f} | Material Use: {mat:.2f}")
+    plt.axis('equal')
+    plt.axis('off')
+    plt.legend(['Solution','Target'])
+
 def to_final_representation(C,x0,fixed_nodes,motor,target):
     """Get 1D representation of mechanism
     ----------
