@@ -356,7 +356,7 @@ def batch_ga_functions(C,x0,fixed_nodes,target_pc, motor, idx=None,device='cpu',
         best_matches[~good_idx] = best_matches[good_idx][0]
         best_matches = uniformize(best_matches,target_pc.shape[0])
         
-        tr,sc,an = find_transforms(best_matches,target_pc, batch_ordered_distance)
+        tr,sc,an = find_transforms(best_matches,target_pc, batch_chamfer_distance)
         tiled_curves = target_pc.unsqueeze(0).tile([best_matches.shape[0],1,1])
         tiled_curves = apply_transforms(tiled_curves,tr,s*torch.ones_like(sc),-an)
 
@@ -443,7 +443,7 @@ def optimization_functions(C,x0,fixed_nodes,target_pc, motor, idx=None,device='c
     best_matches = uniformize(best_matches,target_pc.shape[0])
     
     
-    tr,sc,an = find_transforms(best_matches,target_pc, batch_ordered_distance)
+    tr,sc,an = find_transforms(best_matches,target_pc, batch_chamfer_distance)
     tiled_curves = target_pc.unsqueeze(0).tile([best_matches.shape[0],1,1])
     tiled_curves = apply_transforms(tiled_curves,tr,s*torch.ones_like(sc),-an)
 
@@ -544,6 +544,7 @@ def solve_mechanism(C,x0,fixed_nodes, motor, device='cpu', timesteps=2000):
     """
 
     res = sort_mech(C, x0, motor,fixed_nodes)
+
     if res: 
         C, x0, fixed_nodes, sorted_order = res
         
@@ -559,12 +560,13 @@ def solve_mechanism(C,x0,fixed_nodes, motor, device='cpu', timesteps=2000):
     thetas = torch.Tensor(np.linspace(0,np.pi*2,timesteps+1)[0:timesteps]).to(device)
 
     current_x0 = torch.Tensor(np.expand_dims(x0,0)).to(device)
-    sol,cos = solve_rev_vectorized_batch_wds(A,current_x0,node_types,thetas)
+    sol = solve_rev_vectorized_batch(A,current_x0,node_types,thetas)
     material = get_mat(torch.Tensor(x0), A[0])
+
     if torch.isnan(sol).any():
         return False, None, None, None
     else:
-        return True, sol, cos, material
+        return True, sol, None, material
 
 def evaluate_mechanism(C,x0,fixed_nodes, motor, target_pc, idx=None,device='cpu',timesteps=2000):
     """Calculate the validity, chamfer distance, and material use of a mechanism with respect to a target curve. 
@@ -593,26 +595,57 @@ def evaluate_mechanism(C,x0,fixed_nodes, motor, target_pc, idx=None,device='cpu'
     sol:     numpy array [N,2]
             The positions of the nodes at each angle.
     """
-
+    
     if idx is None:
         idx = C.shape[0]-1
-    target_pc = get_oriented(target_pc)
-    valid, sol, cos, material = solve_mechanism(C,x0,fixed_nodes, motor, device, timesteps)
-    if not valid:
-        return False, None, None, None
-    else:
-        sol = sol.detach().numpy()[0,idx,:,:]
-        sol1, sol2 = get_oriented_both(sol)
-        CD1 = batch_chamfer_distance(torch.tensor(sol1, dtype = float).unsqueeze(0),torch.tensor(target_pc, dtype = float).unsqueeze(0))[0]
-        CD2 = batch_chamfer_distance(torch.tensor(sol2, dtype = float).unsqueeze(0),torch.tensor(target_pc, dtype = float).unsqueeze(0))[0]
-        if CD1<CD2:
-            CD = CD1
-            sol = sol1
-        else:
-            CD = CD2
-            sol = sol2
         
-        return True, float(CD), float(material), sol
+    if idx in fixed_nodes:
+        return False, None, None, None, None
+
+    xc = x0.copy()
+    res = sort_mech(C, x0, motor,fixed_nodes)
+    if res: 
+        C, x0, fixed_nodes, sorted_order = res
+        
+        inverse_order = np.argsort(sorted_order)
+    else:
+        return False, None, None, None, None
+
+    A = torch.Tensor(np.expand_dims(C,0)).to(device)
+    X = torch.Tensor(np.expand_dims(x0,0)).to(device)
+    node_types = np.zeros([1,C.shape[0],1])
+    node_types[0,fixed_nodes,:] = 1
+    node_types = torch.Tensor(node_types).to(device)
+
+    s = torch.sqrt(torch.square(torch.tensor(target_pc).float().to(device).unsqueeze(0)).sum(-1).sum(-1)/target_pc.shape[0]).squeeze()
+
+    target_pc = preprocess_curves(torch.Tensor(target_pc).to(device).unsqueeze(0), target_pc.shape[0])[0]
+
+    thetas = torch.Tensor(np.linspace(0,np.pi*2,timesteps+1)[0:timesteps]).to(device)
+
+    x_sol = solve_rev_vectorized_batch(A,X,node_types,thetas)
+    best_matches = x_sol[:,idx]
+    good_idx = ~torch.isnan(best_matches.sum(-1).sum(-1))
+
+    if torch.isnan(x_sol).any() or good_idx.sum() == 0:
+        return False, None, None, None, None
+
+    best_matches[~good_idx] = best_matches[good_idx][0]
+    try:
+        best_matches = uniformize(best_matches,target_pc.shape[0])
+    except:
+        return False, None, None, None, None
+    tr,sc,an = find_transforms(best_matches,target_pc, batch_chamfer_distance)
+    tiled_curves = target_pc.unsqueeze(0).tile([best_matches.shape[0],1,1])
+    tiled_curves = apply_transforms(tiled_curves,tr,s*torch.ones_like(sc),-an)
+    
+    
+    CD = batch_chamfer_distance(best_matches,tiled_curves)[0].detach().cpu().numpy()
+    material = get_mat(torch.Tensor(x0), A[0]).detach().cpu().numpy()
+
+    sol = x_sol.detach().numpy()[0,idx,:,:]
+    
+    return True, float(CD), float(material), sol, tiled_curves[0].detach().cpu().numpy()
 
 def batch_random_generator(N, g_prob = 0.15, n=None, N_min=8, N_max=20, scale=1, strategy='rand', show_progress=True):
     """Fast generate a batch of random mechanisms that are not locking or invalid.
@@ -859,7 +892,7 @@ def evaluate_submission(target_curves_path = './target_curves.npy', results_fold
                 C,x0,fixed_nodes,motor,target = from_1D_representation(m)
 
                 # Solve
-                valid, CD, material, _ = evaluate_mechanism(C,x0,fixed_nodes, motor, target_curves[i], target, device='cpu',timesteps=2000)
+                valid, CD, material, _, _ = evaluate_mechanism(C,x0,fixed_nodes, motor, target_curves[i], target, device='cpu',timesteps=2000)
                 
                 if valid:                    
                     if CD<=0.1 and material<=10.0:
@@ -1047,11 +1080,11 @@ def visualize_pareto_front(mechanisms,F,target_curve):
         draw_mechanism_on_ax(C,x0,fixed_nodes,motor,axs[i,0])
 
         # Solve
-        valid, CD, mat, sol = evaluate_mechanism(C,x0,fixed_nodes, motor, target_curve, idx = target)
-        target_curve = get_oriented(target_curve)
+        valid, CD, mat, sol, aligned_curve = evaluate_mechanism(C,x0,fixed_nodes, motor, target_curve, idx = target)
+        # target_curve = get_oriented(target_curve)
         # Plot
         axs[i,1].plot(sol[:,0],sol[:,1], color='royalblue', linewidth=3)
-        axs[i,1].plot(target_curve[:,0],target_curve[:,1], color='tomato', alpha=0.5, linewidth=3)
+        axs[i,1].plot(aligned_curve[:,0],aligned_curve[:,1], color='tomato', alpha=0.5, linewidth=3)
         axs[i,1].axis('equal')
         axs[i,1].axis('off')
 
