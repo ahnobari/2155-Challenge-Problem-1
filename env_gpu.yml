@@ -16,8 +16,6 @@ dependencies:
   - scipy
   - seaborn
   - plotly
-  - jaxlib=*=*cuda* 
-  - jax 
   - cuda-nvcc
   - tqdm
   - pip
@@ -25,3 +23,4 @@ dependencies:
       - deprecated
       - pymoo
       - svgpath2mpl
+      - jax[cuda]
