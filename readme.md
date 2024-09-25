@@ -17,7 +17,6 @@ This challenge problem is focused on synthesizing planar linkage mechanisms such
 <li>tqdm</li>
 </ul>
 
-IMPORTANT: As of 9/2023, there is a package conflict between pymoo and numpy versions 1.24 or higher. You will need to install an older version of numpy to run this code. (Tested on 1.23.5)
 Run:
 ```
 conda create -n <environment-name> 
