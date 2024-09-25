@@ -16,10 +16,10 @@ dependencies:
   - scipy
   - seaborn
   - plotly
-  - jax 
   - tqdm
   - pip
   - pip:
       - deprecated
       - pymoo
       - svgpath2mpl
+      - jax 
