@@ -770,6 +770,10 @@ def random_generator_ns(g_prob = 0.15, n=None, N_min=8, N_max=20, scale=1, strat
                     x[0:sub_size] = np.random.uniform(low=0.0,high=1.0,size=[sub_size,2])
 
                 valid, _, _, _  = solve_mechanism(C[0:sub_size,0:sub_size], x[0:sub_size], fixed_nodes[np.where(fixed_nodes<sub_size)], motor, device = "cpu", timesteps = 50)
+
+                if valid:
+                    valid, _, _, _= solve_mechanism(C, x, fixed_nodes, motor, device = "cpu", timesteps = 2000)
+                
                 invalid = not valid
                 co+=1
 
@@ -802,8 +806,11 @@ def random_generator_ns(g_prob = 0.15, n=None, N_min=8, N_max=20, scale=1, strat
         while invalid:
             x = np.random.uniform(low=0.1+0.25*co/1000,high=0.9-0.25*co/1000,size=[n,2])
             valid, _, _, _= solve_mechanism(C, x, fixed_nodes, motor, device = "cpu", timesteps = 50)
+            if valid:
+                valid, _, _, _= solve_mechanism(C, x, fixed_nodes, motor, device = "cpu", timesteps = 2000)
             invalid = not valid
             co += 1
+            
             
             if co>=1000:
                 return random_generator_ns(g_prob, n, N_min, N_max, scale, strategy)
